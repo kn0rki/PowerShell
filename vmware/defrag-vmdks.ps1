@@ -3,8 +3,14 @@
 
 param(
 	[string]$vmdkpath = ".\",
-	[string]$vmwarevdiskmanagerpath = "G:\Programme\VMware Workstation\vmware-vdiskmanager.exe"
+	[string]$vmwarevdiskmanagerpath
 )
+
+if(!($vmwarevdiskmanagerpath)){
+	$vmwarevdiskmanagerpath = (get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\").installpath
+	$vmwarevdiskmanagerpath += "vmware-vdiskmanager.exe"
+}
+
 
 $files = Get-ChildItem -Path $vmdkpath -Recurse | ?{ $_.Name -like "*.vmdk"} | %{echo $_.VersionInfo.Filename}
 $files | % { echo $_;& "$vmwarevdiskmanagerpath" -d $_}
