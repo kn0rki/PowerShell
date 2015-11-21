@@ -3,14 +3,14 @@
 
 $mailboxes = get-mailbox
 $mailboxes |% {
-	echo "USER:$_ -----"
-	ADPERMS = $_ |get-adpermission |?{ $_.ExtendedRights.RawIdentity -eq "Send-As"}
-	$MAILBOXPERMS = $_ | Get-MailboxPermission |? {$_.AccessRights -eq "FullAccess"}
+	Write-Output "USER:$_ -----"
+	ADPERMS = $_ |get-adpermission |Where-Object{ $_.ExtendedRights.RawIdentity -eq 'Send-As'}
+	$MAILBOXPERMS = $_ | Get-MailboxPermission |Where-Object {$_.AccessRights -eq 'FullAccess'}
 	
-	echo "ADPERMS: $_ -----"
-	$ADPERMS |ft -autosize
+	Write-Output "ADPERMS: $_ -----"
+	$ADPERMS |Format-Table -autosize
 	
-	echo "MAILBOXPERMS:$_ -----"
-	$MAILBOXPERMS | ft -autosize
-	echo "/USER:$_ -----"
+	Write-Output "MAILBOXPERMS:$_ -----"
+	$MAILBOXPERMS | Format-Table -autosize
+	Write-Output "/USER:$_ -----"
 }
