@@ -2,9 +2,9 @@
 #Gets the Accounts with FullAccess / SendAS Rights for each mailbox
 
 $mailboxes = get-mailbox
-$mailboxes |% {
+$mailboxes |ForEach-Object {
 	Write-Output "USER:$_ -----"
-	ADPERMS = $_ |get-adpermission |Where-Object{ $_.ExtendedRights.RawIdentity -eq 'Send-As'}
+	$ADPERMS = $_ |get-adpermission |Where-Object{ $_.ExtendedRights.RawIdentity -eq 'Send-As'}
 	$MAILBOXPERMS = $_ | Get-MailboxPermission |Where-Object {$_.AccessRights -eq 'FullAccess'}
 	
 	Write-Output "ADPERMS: $_ -----"
