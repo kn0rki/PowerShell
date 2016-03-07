@@ -8,9 +8,9 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE 
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 	
-    Version 2.12, October 26th, 2015
+    Version 2.2, February 27th, 2016
 
-    Thanks to Maarten Piederiet, Thomas Stensitzki, Brian Reid, Martin Sieber & everyone who provided feedback.
+    Thanks to Maarten Piederiet, Thomas Stensitzki, Brian Reid, Martin Sieber, Sebastiaan Brozius and everyone who provided feedback.
     
     .DESCRIPTION
     This script can install Exchange 2013/2016 prerequisites, optionally create the Exchange 
@@ -110,6 +110,11 @@
     2.11    Added Exchange 2016 RTM support
             Removed Exchange 2016 Preview support
     2.12    Fixed pre-CU7 .NET installation logic
+    2.2     Added (temporary) blocking unsupported .NET Framework 4.6.1 (KB3133990)
+            Added recommended updates KB2884597 & KB2894875 for WS2012
+            Changes to output so all output/verbose/warning/error get logged
+            Added check to Organization for invalid characters
+            Fixed specifying an Organization name containing spaces
                 
     .PARAMETER Organization
     Specifies name of the Exchange organization to create. When omitted, the step
@@ -142,7 +147,7 @@
 
     .PARAMETER SourcePath
     Specifies location of the Exchange installation files (setup.exe).
-
+    -
     .PARAMETER TargetPath
     Specifies the location where to install the Exchange binaries.
 
@@ -197,11 +202,12 @@ param(
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="NoSetup")]
+		[ValidatePattern("(?# Organization Name can only consist of upper or lowercase A-Z, 0-9, spaces - not at beginning or end, hyphen or dash characters, can be up to 64 characters in length, and can't be empty)^[a-zA-Z0-9\-\–\—][a-zA-Z0-9\-\–\—\ ]{1,62}[a-zA-Z0-9\-\–\—]$")]
 		[string]$Organization,
-    [parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
-        [switch]$InstallMultiRole,
+    	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
+        	[switch]$InstallMultiRole,
 	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName="C")]
-        [switch]$InstallCAS,
+        	[switch]$InstallCAS,
    	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
     		[switch]$InstallMailbox,
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
@@ -338,15 +344,15 @@ process {
     $WS2012R2_MAJOR                 = '6.3'
     
     Function Save-State( $State) {
-        Write-Verbose "Saving state information to $StateFile"
+        Write-MyVerbose "Saving state information to $StateFile"
         Export-Clixml -InputObject $State -Path $StateFile
     }
 
     Function Load-State() {
         $State= @{}
         If(Test-Path $StateFile) {
-            Write-Verbose "Loading state information from $StateFile"
             $State= Import-Clixml -Path $StateFile -ErrorAction SilentlyContinue
+            Write-MyVerbose "State information loaded from $StateFile"
         }
         Else {
             Write-Verbose "No state file found at $StateFile"
@@ -388,13 +394,33 @@ process {
         return $res
     }
 
+    Function Write-MyOutput( $Text) {
+        Write-Output $Text
+        Write-Output "$(Get-Date -Format u): $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+    }
+
+    Function Write-MyWarning( $Text) {
+        Write-Warning $Text
+        Write-Output "$(Get-Date -Format u): [WARNING] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+    }
+
+    Function Write-MyError( $Text) {
+        Write-Error $Text
+        Write-Output "$(Get-Date -Format u): [ERROR] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+    }
+
+    Function Write-MyVerbose( $Text) {
+        Write-Verbose $Text
+        Write-Output "$(Get-Date -Format u): [VERBOSE] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+    }
+
     Function Get-PSExecutionPolicy {
         $PSPolicyKey= Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell' -Name ExecutionPolicy -ErrorAction SilentlyContinue
         If( $PSPolicy) {
             Write-Warning "PowerShell Execution Policy is set to $($PSPolicy.ExecutionPolicy) through GPO"
         }
         Else {
-            Write-Verbose "PowerShell Execution Policy not configured through GPO"
+            Write-MyVerbose "PowerShell Execution Policy not configured through GPO"
         }
         return $PSPolicy
     }
@@ -404,13 +430,13 @@ process {
         $res= $true
         If( !( Test-Path "$InstallPath\$FileName")) {
             If( $URL) {
-                Write-Output "$FileName not present, downloading $Package"
+                Write-MyOutput "$FileName not present, downloading $Package"
                 Try{
-                    Write-Verbose "Source: $URL"
+                    Write-MyVerbose "Source: $URL"
                     Start-BitsTransfer -Source $URL -Destination "$InstallPath\$FileName"        
                 }
                 Catch{
-                    Write-Error "Problem downloading file from URL"
+                    Write-MyError "Problem downloading file from URL"
                     $res= $false
                 }
             }
@@ -420,7 +446,7 @@ process {
             }
         }
         Else {
-            Write-Verbose "$Package present ($InstallPath\$FileName)"
+            Write-MyVerbose "$Package present ($InstallPath\$FileName)"
         }
         Return $res
     }
@@ -447,24 +473,24 @@ process {
     }
 
     Function Enable-RunOnce {
-        Write-Output "Set script to run once after reboot"
+        Write-MyOutput "Set script to run once after reboot"
         $RunOnce= "$PSHome\powershell.exe -NoProfile -ExecutionPolicy Unrestricted -Command `"& `'$ScriptFullName`' -InstallPath `'$InstallPath`'`""
-        Write-Verbose "RunOnce: $RunOnce"
+        Write-MyVerbose "RunOnce: $RunOnce"
         New-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name "$ScriptName"  -Value "$RunOnce" -ErrorAction SilentlyContinue| out-null
     }
 
     Function Disable-UAC {
-        Write-Verbose "Disabling User Account Control"
+        Write-MyVerbose "Disabling User Account Control"
         New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -Value 0 -ErrorAction SilentlyContinue| out-null
     }
 
     Function Enable-UAC {
-        Write-Verbose "Enabling User Account Control"
+        Write-MyVerbose "Enabling User Account Control"
         New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -Value 1 -ErrorAction SilentlyContinue| out-null
     }
 
     Function Disable-IEESC {
-        Write-Output "Disabling IE Enhanced Security Configuration"
+        Write-MyOutput "Disabling IE Enhanced Security Configuration"
         $AdminKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A7-37EF-4b3f-8CFC-4F3A74704073}"
         $UserKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}"
         Set-ItemProperty -Path $AdminKey -Name "IsInstalled" -Value 0
@@ -473,7 +499,7 @@ process {
     }
     
     Function Enable-IEESC {
-        Write-Verbose "Enabling IE Enhanced Security Configuration"
+        Write-MyVerbose "Enabling IE Enhanced Security Configuration"
         $AdminKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A7-37EF-4b3f-8CFC-4F3A74704073}"
         $UserKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}"
         Set-ItemProperty -Path $AdminKey -Name "IsInstalled" -Value 1
@@ -509,7 +535,7 @@ process {
     }
 
     Function Enable-AutoLogon {
-        Write-Verbose "Enabling Automatic Logon"
+        Write-MyVerbose "Enabling Automatic Logon"
         $PlainTextPassword= [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR( (ConvertTo-SecureString $State["AdminPassword"]) ))
         $PlainTextAccount= $State["AdminAccount"]
         New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name AutoAdminLogon -Value 1 -ErrorAction SilentlyContinue| out-null
@@ -518,14 +544,14 @@ process {
     }
 
     Function Disable-AutoLogon {
-        Write-Verbose "Disabling Automatic Logon"
+        Write-MyVerbose "Disabling Automatic Logon"
         Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name AutoAdminLogon -ErrorAction SilentlyContinue| out-null
         Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultUserName -ErrorAction SilentlyContinue| out-null
         Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword -ErrorAction SilentlyContinue| out-null
     }
 
     Function Disable-OpenFileSecurityWarning {
-        Write-Verbose "Disabling File Security Warning dialog"
+        Write-MyVerbose "Disabling File Security Warning dialog"
         New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Associations" -ErrorAction SilentlyContinue |out-null
         New-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Associations" -name "LowRiskFileTypes" -value ".exe;.msp;.msu" -ErrorAction SilentlyContinue |out-null
         New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Attachments" -ErrorAction SilentlyContinue |out-null
@@ -535,7 +561,7 @@ process {
     }
 
     Function Enable-OpenFileSecurityWarning {
-        Write-Verbose "Enabling File Security Warning dialog"
+        Write-MyVerbose "Enabling File Security Warning dialog"
         Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Associations" -Name "LowRiskFileTypes" -ErrorAction SilentlyContinue
         Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Attachments" -Name "SaveZoneInformation" -ErrorAction SilentlyContinue
         Remove-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Associations" -Name "LowRiskFileTypes" -ErrorAction SilentlyContinue
@@ -543,7 +569,7 @@ process {
     }
 
     Function StartWait-Extract ( $FilePath, $FileName) {
-        Write-Verbose "Extracting $FilePath\$FileName to $FilePath"
+        Write-MyVerbose "Extracting $FilePath\$FileName to $FilePath"
         If( Test-Path "$FilePath\$FileName") {
             $TempNam= "$FilePath\$FileName.zip"
             Copy-Item "$FilePath\$FileName" "$TempNam" -Force
@@ -559,7 +585,7 @@ process {
     }
 
     Function StartWait-Process ( $FilePath, $FileName, $ArgumentList) {
-        Write-Verbose "Executing $FilePath\$FileName $($ArgumentList -Join " ")"
+        Write-MyVerbose "Executing $FilePath\$FileName $($ArgumentList -Join " ")"
         If( Test-Path "$FilePath\$FileName") {
             Switch( ([io.fileinfo]$Filename).extension.ToUpper()) {
                 ".MSU" {
@@ -593,7 +619,7 @@ process {
             $rval= ( ([ADSI]"LDAP://cn=partitions,cn=configuration,$NC").get("msDS-Behavior-Version") )
         }
         Catch {
-            Write-Error "Can't read Forest schema version, operator possible not member of Schema admin group"
+            Write-MyError "Can't read Forest schema version, operator possible not member of Schema admin group"
         }
         return $rval
     }
@@ -607,10 +633,10 @@ process {
         $NC= Get-ForestRootNC
         Try {
             $ExOrgContainer= [ADSI]"LDAP://CN=Microsoft Exchange,CN=Services,CN=Configuration,$NC"
-            $rval= ($ExOrgContainer.PSBase.Children | Where { $_.objectClass -eq 'msExchOrganizationContainer' }).Name
+            $rval= ($ExOrgContainer.PSBase.Children | Where-Object { $_.objectClass -eq 'msExchOrganizationContainer' }).Name
         }
         Catch {
-            Write-Verbose "Can't find Exchange Organization object, forest not prepared"
+            Write-MyVerbose "Can't find Exchange Organization object"
             $rval= $null
         }
         return $rval
@@ -637,7 +663,7 @@ process {
         $LDAPSearch.SearchRoot= "LDAP://CN=Configuration,$NC"
         $LDAPSearch.Filter= "(&(cn=$Name)(objectClass=serviceConnectionPoint)(serviceClassName=ms-Exchange-AutoDiscover-Service)(|(keywords=67661d7F-8FC4-4fa7-BFAC-E1D7794C1F68)(keywords=77378F46-2C66-4aa9-A6A6-3E7A48B19596)))"
         $LDAPSearch.FindAll() | ForEach-Object {
-            Write-Verbose "Removing object $($_.Path)"
+            Write-MyVerbose "Removing object $($_.Path)"
             ([ADSI]($_.Path)).DeleteTree()
         }
     }
@@ -648,14 +674,14 @@ process {
         $LDAPSearch.SearchRoot= "LDAP://CN=Configuration,$NC"
         $LDAPSearch.Filter= "(&(cn=$Name)(objectClass=serviceConnectionPoint)(serviceClassName=ms-Exchange-AutoDiscover-Service)(|(keywords=67661d7F-8FC4-4fa7-BFAC-E1D7794C1F68)(keywords=77378F46-2C66-4aa9-A6A6-3E7A48B19596)))"
         $LDAPSearch.FindAll() | ForEach-Object {
-            Write-Verbose "Setting serviceBindingInformation on $($_.Path) to $ServiceBinding"
+            Write-MyVerbose "Setting serviceBindingInformation on $($_.Path) to $ServiceBinding"
             Try {
                 $SCPObj= $_.GetDirectoryEntry()
                 [void]$SCPObj.Put( 'serviceBindingInformation', $ServiceBinding)
                 $SCPObj.SetInfo()
             }
             Catch {
-                Write-Error "Problem setting serviceBindingInformation property: $($Error[0])"
+                Write-MyError "Problem setting serviceBindingInformation property: $($Error[0])"
             }
         }
     }
@@ -665,7 +691,7 @@ process {
     }
 
     Function Load-ExchangeModule {
-        Write-Verbose "Loading Exchange PowerShell module"
+        Write-MyVerbose "Loading Exchange PowerShell module"
         If( -not ( Get-Command Connect-ExchangeServer -ErrorAction SilentlyContinue)) {
             $SetupPath= (Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup -Name MsiInstallPath -ErrorAction SilentlyContinue).MsiInstallPath
             If( $SetupPath -and (Test-Path "$SetupPath\bin\RemoteExchange.ps1" )) {
@@ -674,7 +700,7 @@ process {
                     Connect-ExchangeServer (Get-LocalFQDNHostname)
                 }
                 Catch {
-                    Write-Error 'Problem loading Exchange module'
+                    Write-MyError 'Problem loading Exchange module'
                 }
             }
             Else {
@@ -688,7 +714,7 @@ process {
 
     Function Install-Exchange15_ {
         $ver= $State['MajorSetupVersion']
-        Write-Output "Installing Microsoft Exchange Server ($ver)"
+        Write-MyOutput "Installing Microsoft Exchange Server ($ver)"
         If( $State['MajorSetupVersion'] -ge 15.1) {
             $PresenceKey= "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{CD981244-E9B8-405A-9026-6AEB9DCEF1F1}"
         }
@@ -727,23 +753,23 @@ process {
 
         StartWait-Process $State["SourcePath"] "setup.exe" $Params
         If( !( Get-Item $PresenceKey -ErrorAction SilentlyContinue)){
-                Write-Error "Problem installing Exchange"
+                Write-MyError "Problem installing Exchange"
                 Exit $ERR_PROBLEMEXCHANGESETUP
         }
     }
 
     Function Prepare-Exchange {
-        Write-Output "Preparing Active Directory"
+        Write-MyOutput "Preparing Active Directory"
         $params= @()
-        Write-Output "Checking Exchange organization existence"
+        Write-MyOutput "Checking Exchange organization existence"
         If( ( Test-ExchangeOrganization $State["OrganizationName"]) -ne $null) {
             $params+= "/PrepareAD", "/OrganizationName:`"$($State["OrganizationName"])`""
         }
         Else {
-            Write-Output "Organization exist; checking Exchange Forest Schema and Domain versions"
+            Write-MyOutput "Organization exist; checking Exchange Forest Schema and Domain versions"
             $forestlvl= Get-ExchangeForestLevel
             $domainlvl= Get-ExchangeDomainLevel
-            Write-Output "Exchange Forest Schema version: $forestlvl, Domain: $domainlvl)"
+            Write-MyOutput "Exchange Forest Schema version: $forestlvl, Domain: $domainlvl)"
             If( $State['MajorSetupVersion'] -ge 15.1) {
                 $MinFFL= $EX2016_MINFORESTLEVEL
                 $MinDFL= $EX2016_MINDOMAINLEVEL
@@ -753,22 +779,22 @@ process {
                 $MinDFL= $EX2013_MINDOMAINLEVEL
             }
             If(( $forestlvl -lt $MinFFL) -or ( $domainlvl -lt $MinDFL)) {
-                Write-Output "Exchange Forest Schema or Domain needs updating (Required: $MinFFL/$MinDFL)"
+                Write-MyOutput "Exchange Forest Schema or Domain needs updating (Required: $MinFFL/$MinDFL)"
                 $params+= "/PrepareAD"
 
             }
             Else {
-                Write-Output "Active Directory looks already updated".
+                Write-MyOutput "Active Directory looks already updated".
             }
         }
         If ($params.count -gt 0) {
-            Write-Output "Preparing AD, Exchange organization will be $($State["OrganizationName"])"
+            Write-MyOutput "Preparing AD, Exchange organization will be $($State["OrganizationName"])"
             $params+= "/IAcceptExchangeServerLicenseTerms"
             StartWait-Process $State["SourcePath"] "setup.exe" $params
             If( ( ( Test-ExchangeOrganization $State["OrganizationName"]) -eq $null) -or
                 ( (Get-ExchangeForestLevel) -lt $MinFFL) -or
                 ( (Get-ExchangeDomainLevel) -lt $MinDFL)) {
-                Write-Error "Problem updating schema, domain or Exchange organization"
+                Write-MyError "Problem updating schema, domain or Exchange organization"
                 Exit $ERR_PROBLEMADPREPARE
             }
         }
@@ -778,12 +804,12 @@ process {
     }
 
     Function Install-WindowsFeatures( $MajorOSVersion) {
-        Write-Output "Installing Windows Features"
+        Write-MyOutput "Installing Windows Features"
 
         If ($MajorOSVersion -eq $WS2008R2_MAJOR) {
             Import-Module ServerManager
             If(!( Get-Module ServerManager )) {
-                Write-Error "Problem loading ServerManager module"
+                Write-MyError "Problem loading ServerManager module"
                 Exit $ERR_CANTLOADSERVERMANAGER
             }
             $Feats= ("NET-Framework", "Desktop-Experience", "RSAT-ADDS", "Bits", "RSAT-Clustering-CmdInterface")
@@ -801,7 +827,7 @@ process {
 
         ForEach( $Feat in $Feats) {
             If( !( Get-WindowsFeature ($Feat))) {
-                Write-Error "Feature $Feat appears not to be installed"
+                Write-MyError "Feature $Feat appears not to be installed"
                 Exit $ERR_PROBLEMADDINGFEATURE
             }
         }
@@ -809,7 +835,7 @@ process {
 
     Function Package-IsInstalled( $PackageID) {
         $PresenceKey= $null
-        $PresenceKey= (Get-WmiObject win32_quickfixengineering | Where { $_.HotfixID -eq $PackageID }).HotfixID
+        $PresenceKey= (Get-WmiObject win32_quickfixengineering | Where-Object { $_.HotfixID -eq $PackageID }).HotfixID
         If( !( $PresenceKey)) {
             $PresenceKey= (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$PackageID" -Name "DisplayName" -ErrorAction SilentlyContinue).DisplayName 
             If(!( $PresenceKey)) {
@@ -825,7 +851,7 @@ process {
     }
 
     Function Package-Install ( $PackageID, $Package, $FileName, $OnlineURL, [array]$Arguments) {
-        Write-Output "Processing $Package ($PackageID)"
+        Write-MyOutput "Processing $Package ($PackageID)"
         $PresenceKey= Package-IsInstalled $PackageID
         If( !( $PresenceKey )){
 
@@ -838,25 +864,25 @@ process {
 
                     # Download & Extract
                     If( !( Check-Package $Package $OnlineURL $PackageFile $State["InstallPath"])) {
-                        Write-Error "Problem downloading/accessing $Package"
+                        Write-MyError "Problem downloading/accessing $Package"
                         Exit $ERR_PROBLEMPACKAGEDL
                     }
-                    Write-Output "Extracting Hotfix Packge $Package"
+                    Write-MyOutput "Extracting Hotfix Packge $Package"
                     StartWait-Extract $State["InstallPath"] $PackageFile 
 
                     If( !( Check-Package $Package $OnlineURL $PackageFile $State["InstallPath"])) {
-                        Write-Error "Problem downloading/accessing $Package"
+                        Write-MyError "Problem downloading/accessing $Package"
                         Exit $ERR_PROBLEMPACKAGEEXTRACT
                     }
                 }
-                Write-Output "Installing $Package"
+                Write-MyOutput "Installing $Package"
                 StartWait-Process $State["InstallPath"] $FileName $Arguments
 
             }
             Else {
 
                 If( !( Check-Package $Package $OnlineURL $FileName $State["InstallPath"])) {
-                    Write-Error "Problem downloading/accessing $Package"
+                    Write-MyError "Problem downloading/accessing $Package"
                     Exit $ERR_PROBLEMPACKAGEDL
                 }
                 StartWait-Process $State["InstallPath"] $FileName $Arguments
@@ -864,19 +890,19 @@ process {
             
             $PresenceKey= Package-IsInstalled $PackageID
             If( !( $PresenceKey)){
-                Write-Error "Problem installing $Package"
+                Write-MyError "Problem installing $Package"
                 Exit $ERR_PROBLEMPACKAGESETUP
             }
         }
         Else {
-            Write-Verbose "$Package already installed"
+            Write-MyVerbose "$Package already installed"
         }    
     }
 
     Function Enable-IFilters {
         # From: Brian Reid (@BrianReidC7)
         # Note: Requires restarting "Microsoft Exchange Transport" and "Microsoft Filtering Management Service", but reboot will take care of that
-        Write-Output "Enabling OneNote and Publisher filtering" 
+        Write-MyOutput "Enabling OneNote and Publisher filtering" 
         $iFilterDirName = "C:\Program Files\Common Files\Microsoft Shared\Filters\"
         $KeyParent = "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\HubTransportRole"
         $CLSIDKey = "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\HubTransportRole\CLSID"
@@ -904,7 +930,7 @@ process {
     Function DisableSharedCacheServiceProbe {
         # Taken from DisableSharedCacheServiceProbe.ps1
         # Copyright (c) Microsoft Corporation. All rights reserved. 
-        Write-Output "Applying DisableSharedCacheServiceProbe (KB2971467, 'Shared Cache Service Restart' Probe Fix)"
+        Write-MyOutput "Applying DisableSharedCacheServiceProbe (KB2971467, 'Shared Cache Service Restart' Probe Fix)"
         $exchangeInstallPath = get-itemproperty -path HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup -ErrorAction SilentlyContinue
         if ($exchangeInstallPath -ne $null -and (Test-Path $exchangeInstallPath.MsiInstallPath)) {
             $ProbeConfigFile= Join-Path ( $exchangeInstallPath.MsiInstallPath) ('Bin\Monitoring\Config\SharedCacheServiceTest.xml')
@@ -919,7 +945,7 @@ process {
 	            $definition = $xmlDoc.Definition.MaintenanceDefinition;
 	
 	            if($definition -eq $null) {
-                    Write-Error "KB2971467: Expected XML node Definition.MaintenanceDefinition.ExtensionAttributes not found. Skipping."
+                    Write-MyError "KB2971467: Expected XML node Definition.MaintenanceDefinition.ExtensionAttributes not found. Skipping."
                 }
                 Else {
                     $modified = $false;
@@ -929,26 +955,26 @@ process {
                     }
 	                If($modified) {
                         $xmlDoc.Save($ProbeConfigFile);
-                        Write-Output "Finished KB2971467, Saved $ProbeConfigFile"
+                        Write-MyOutput "Finished KB2971467, Saved $ProbeConfigFile"
                     }
                     Else {
-                        Write-Output "Finished KB2971467, No values modified."
+                        Write-MyOutput "Finished KB2971467, No values modified."
                     }
                 }
             }
             Else {
-	            Write-Error "KB2971467: Did not find file in expected location, skipping $ProbeConfigFile"
+	            Write-MyError "KB2971467: Did not find file in expected location, skipping $ProbeConfigFile"
 	        }
         }
         Else {
-            Write-Error 'KB2971467: Unable to locate Exchange install path'
+            Write-MyError 'KB2971467: Unable to locate Exchange install path'
         }
     }
 
     Function Exchange2013-KB2938053-FixIt {
         # Taken from Exchange2013-KB2938053-FixIt.ps1
         # Copyright (c) Microsoft Corporation. All rights reserved. 
-        Write-Output "Applying Exchange2013-KB2938053-FixIt (KB2938053, Transport Agent Fix)"
+        Write-MyOutput "Applying Exchange2013-KB2938053-FixIt (KB2938053, Transport Agent Fix)"
         $baseDirectory = "$Env:Windir\Microsoft.NET\assembly\GAC_MSIL"
         $policyDirectories = @{ "policy.14.0.Microsoft.Exchange.Data.Common" = "Microsoft.Exchange.Data.Common.VersionPolicy14.0.cfg";`
                         "policy.14.0.Microsoft.Exchange.Data.Transport" = "Microsoft.Exchange.Data.Transport.VersionPolicy14.0.cfg";`
@@ -977,55 +1003,70 @@ process {
         }
         $count = 0;
         foreach ($cfgFile in $listOfCFGs) {
-            Write-Verbose "Fixing $cfgFile .."
+            Write-MyVerbose "Fixing $cfgFile .."
             $content = Get-Content $cfgFile
             $content -replace "[-\d+\.]*-->","-->" | Out-File $cfgFile -Force
             $count++
         }
-        Write-Output "Exchange2013-KB2938053-FixIt fixed $count files"
+        Write-MyOutput "Exchange2013-KB2938053-FixIt fixed $count files"
     }
 
     Function Exchange2013-KB2997355-FixIt {
         # Parts taken from Exchange2013-KB2997355-FixIt.ps1
         # Copyright (c) Microsoft Corporation. All rights reserved. 
-        Write-Output "Applying Exchange2013-KB2997355-FixIt (KB2997355, Exchange Online Mailbox Management Fix)"
+        Write-MyOutput "Applying Exchange2013-KB2997355-FixIt (KB2997355, Exchange Online Mailbox Management Fix)"
         $exchangeInstallPath = get-itemproperty -path HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup -ErrorAction SilentlyContinue
         if ($exchangeInstallPath -ne $null -and (Test-Path $exchangeInstallPath.MsiInstallPath)) {
             $cfgFile = Join-Path (Join-Path $exchangeInstallPath.MsiInstallPath "ClientAccess\ecp\DDI") "RemoteDomains.xaml"
 
-            Write-Output "Updating XAML file $cfgfile ..."
+            Write-MyOutput "Updating XAML file $cfgfile ..."
             $content= Get-Content $cfgFile
             $content= $content -Replace '<Variable DataObjectName="RemoteDomain" Name="DomainName" Type="{x:Type s:String}" />','<Variable DataObjectName="RemoteDomain" Name="DomainName" Type="{x:Type s:String}" />    <Variable DataObjectName="RemoteDomain" Name="TargetDeliveryDomain" Type="{x:Type s:Boolean}" />' 
             $content= $content -Replace '<GetListWorkflow Output="Identity, Name, DomainName">','<GetListWorkflow Output="Identity, Name, DomainName, TargetDeliveryDomain">'
             $content= $content -Replace '<GetObjectWorkflow Output="Identity,Name, DomainName, AllowedOOFType, AutoReplyEnabled,AutoForwardEnabled,DeliveryReportEnabled, NDREnabled,  TNEFEnabled, MeetingForwardNotificationEnabled, CharacterSet, NonMimeCharacterSet">','<GetObjectWorkflow Output="Identity, Name, DomainName, TargetDeliveryDomain, AllowedOOFType, AutoReplyEnabled, AutoForwardEnabled, DeliveryReportEnabled, NDREnabled,  TNEFEnabled, MeetingForwardNotificationEnabled, CharacterSet, NonMimeCharacterSet">'
             $content | Out-File $cfgFile -Force
             # IISReset not required at this stage
-            Write-Output "Fixed XAML files"
+            Write-MyOutput "Fixed XAML files"
         }
         Else {
-            Write-Error 'KB2997355: Unable to locate Exchange install path'
+            Write-MyError 'KB2997355: Unable to locate Exchange install path'
         }
     }
 
     Function Get-NETVersion {
         # 378389 = v4.5, 378758 = v4.5.1, 378675= v4.5.1/2 on WS2012R2, 379893= v4.5.2
         $NetVersion= (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" -ErrorAction SilentlyContinue).Release
-        Write-Verbose ".NET version installed is $NetVersion"
+        Write-MyVerbose ".NET version installed is $NetVersion"
         return [int]$NetVersion
+    }
+
+    Function Set-NET461InstallBlock {
+        Write-MyOutput "Set installation blockade for .NET Framework 4.6.1 (KB3133990)"
+        $RegKey= "HKLM:\Software\Microsoft\NET Framework Setup\NDP\WU"
+        $RegName= "BlockNetFramework461"
+        If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
+            If( -not( Test-Path $RegKey -ErrorAction SilentlyContinue)) {
+                New-Item -Path (Split-Path $RegKey -Parent) -Name (Split-Path $RegKey -Leaf) -ErrorAction SilentlyContinue | out-null
+            }
+        }
+        New-ItemProperty -Path $RegKey -Name $RegName  -Value 1 -ErrorAction SilentlyContinue| out-null
+        If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
+            Write-MyError "Unable to set registry key"
+        }
     }
 
     Function Check-Sanity {
 
-        Write-Output "Performing sanity checks .."
-        Write-Verbose "Checking Operating System .. $($MajorOSVersion).$($MinorOSVersion)" 
+        Write-MyOutput "Performing sanity checks .."
+        Write-MyVerbose "Checking Operating System .. $($MajorOSVersion).$($MinorOSVersion)" 
         If( ($MajorOSVersion -ne $WS2012R2_MAJOR) -and ($MajorOSVersion -ne $WS2012_MAJOR) -and ($MajorOSVersion -eq $WS2008R2_MAJOR -and $MinorOSVersion -lt 7601) ) {
-            Write-Error "Windows Server 2008 R2 SP1, Windows Server 2012 or Windows Server 2012 R2 is required, but not detected"
+            Write-MyError "Windows Server 2008 R2 SP1, Windows Server 2012 or Windows Server 2012 R2 is required, but not detected"
             Exit $ERR_UNEXPECTEDOS
         }
 
-        Write-Output "Checking running mode .."
+        Write-MyOutput "Checking running mode .."
         If(! ( is-Admin)) {
-            Write-Error "Script requires running in elevated mode"
+            Write-MyError "Script requires running in elevated mode"
             Exit $ERR_RUNNINGNONADMINMODE
         }
 
@@ -1033,31 +1074,31 @@ process {
         If( $ExOrg) {
             If( $State["OrganizationName"]) {
                 If( $State["OrganizationName"] -ne $ExOrg) {
-                    Write-Error "OrganizationName specified mismatch with discovered Exchange Organization name ($ExOrg)"
+                    Write-MyError "OrganizationName mismatches with discovered Exchange Organization name ($ExOrg)"
                     Exit $ERR_ORGANIZATIONNAMEMISMATCH
                 }
             }
-            Write-Output "Exchange Organization is: $ExOrg"
+            Write-MyOutput "Exchange Organization is: $ExOrg"
         }
         Else {
             If( $State["OrganizationName"]) {
-                Write-Output "Exchange Organization will be: $ExOrg"
+                Write-MyOutput "Exchange Organization will be: $($State['OrganizationName'])"
             }
             Else {
-                Write-Error 'OrganizationName not specified and no Exchange Organization discovered'
+                Write-MyError 'OrganizationName not specified and no Exchange Organization discovered'
                 Exit $ERR_MISSINGORGANIZATIONNAME
             }
         }
 
         If( !( $State["NoSetup"]) -or $State["OrganizationName"]) {
-            Write-Output "Checking if we can access Exchange setup .."
+            Write-MyOutput "Checking if we can access Exchange setup .."
             If(! (Test-Path "$($State["SourcePath"])\setup.exe")) {
-                Write-Error "Can't find Exchange setup at $($State["SourcePath"])"
+                Write-MyError "Can't find Exchange setup at $($State["SourcePath"])"
                 Exit $ERR_MISSINGEXCHANGESETUP
             }
 
             $SetupVersion= File-DetectVersion "$($State["SourcePath"])\setup.exe"
-            Write-Output "Exchange setup version: $(Setup-TextVersion $SetupVersion )"
+            Write-MyOutput "Exchange setup version: $(Setup-TextVersion $SetupVersion )"
             If( $SetupVersion) {
                 $Num= $SetupVersion.split('.') | ForEach-Object { [string]([int]$_)}
                 $MajorSetupVersion= [decimal]($num[0]+ '.'+ $num[1])
@@ -1074,67 +1115,67 @@ process {
                 Write-Warning "WMF3 is not supported for Exchange Server 2013 SP1 and up"
             }
 
-            Write-Output "Checking roles to install"
+            Write-MyOutput "Checking roles to install"
             If( $State['MajorSetupVersion'] -ge 15.1) {
                 If ( !( $State["InstallMailbox"])) {
-                    Write-Error "No roles specified to install"
+                    Write-MyError "No roles specified to install"
                     Exit $ERR_UNKNOWNROLESSPECIFIED
                 }
                 If ( $State["InstallCAS"]) {
-                    Write-Warning 'Exchange 2016 setup detected, will ignoring deprecated InstallCAS parameter'
+                    Write-Warning 'Exchange 2016 setup detected, will ignore deprecated InstallCAS parameter'
                 }
             }
             Else {
                 If ( !( $State["InstallMailbox"]) -and !( $State["InstallCAS"])) {
-                    Write-Error "No roles specified to install"
+                    Write-MyError "No roles specified to install"
                     Exit $ERR_UNKNOWNROLESSPECIFIED
                 }
             }
         }
 
-        Write-Output "Checking domain membership status .."
+        Write-MyOutput "Checking domain membership status .."
         If(! ( Get-WmiObject Win32_ComputerSystem).PartOfDomain) {
-            Write-Error "System is not domain-joined"
+            Write-MyError "System is not domain-joined"
             Exit $ERR_NOTDOMAINJOINED
         }
 
-        Write-Output "Checking NIC configuration .."
+        Write-MyOutput "Checking NIC configuration .."
         If(! (Get-WmiObject Win32_NetworkAdapterConfiguration -Filter {IPEnabled=True and DHCPEnabled=False})) {
             Write-Warning "System doesn't have a static IP addresses configured"
         }
 
-        Write-Output "Checking temporary installation folder .."
+        Write-MyOutput "Checking temporary installation folder .."
         Mkdir $State["InstallPath"] -ErrorAction SilentlyContinue |out-null
         If( !( Test-Path $State["InstallPath"])) {
-            Write-Error "Can't create temporary folder $($State["InstallPath"])"
+            Write-MyError "Can't create temporary folder $($State["InstallPath"])"
             Exit $ERR_CANTCREATETEMPFOLDER
         }
         If ( $State["TargetPath"]) {
             $Location= Split-Path $State['TargetPath'] -Qualifier
-            Write-Output "Checking installation path .."
+            Write-MyOutput "Checking installation path .."
             If( !(Test-Path $Location)) {
-                Write-Error "MDB log location unavailable: ($Location)"
+                Write-MyError "MDB log location unavailable: ($Location)"
                 Exit $ERR_MDBDBLOGPATH
             }
         }
         If ( $State["InstallMDBLogPath"]) {
             $Location= Split-Path $State['InstallMDBLogPath'] -Qualifier
-            Write-Output "Checking MDB log path .."
+            Write-MyOutput "Checking MDB log path .."
             If( !(Test-Path $Location)) {
-                Write-Error "MDB log location unavailable: ($Location)"
+                Write-MyError "MDB log location unavailable: ($Location)"
                 Exit $ERR_MDBDBLOGPATH
             }
         }
         If ( $State["InstallMDBDBPath"]) {
             $Location= Split-Path $State['InstallMDBLogPath'] -Qualifier
-            Write-Output "Checking MDB database path .."
+            Write-MyOutput "Checking MDB database path .."
             If( !(Test-Path $Location)) {
-                Write-Error "MDB database location unavailable: ($Location)"
+                Write-MyError "MDB database location unavailable: ($Location)"
                 Exit $ERR_MDBDBLOGPATH
             }
         }
 
-        Write-Output "Checking Exchange Forest Schema Version"
+        Write-MyOutput "Checking Exchange Forest Schema Version"
         If( $State['MajorSetupVersion'] -ge 15.1) {
             $minFFL= $EX2016_MINFORESTLEVEL
             $minDFL= $EX2016_MINDOMAINLEVEL
@@ -1145,48 +1186,48 @@ process {
         }
         $tmp= Get-ExchangeForestLevel
         If( $tmp) {
-            Write-Output "Exchange Forest Schema Version is $tmp"
+            Write-MyOutput "Exchange Forest Schema Version is $tmp"
         }
         Else {
-            Write-Output "Active Directory is not prepared"
+            Write-MyOutput "Active Directory is not prepared"
         }
         If( $tmp -lt $minFFL) {
             If( $State["InstallPhase"] -eq 4) {
                 # Only check before starting setup
-                Write-Error "Minimum required FFL version is $minFFL, aborting"
+                Write-MyError "Minimum required FFL version is $minFFL, aborting"
                 Exit $ERR_BADFORESTLEVEL
             }
         }
 
-        Write-Output "Checking Exchange Domain Version"
+        Write-MyOutput "Checking Exchange Domain Version"
         $tmp= Get-ExchangeDomainLevel
         If( $tmp) {
-            Write-Output "Exchange Domain Version is $tmp"
+            Write-MyOutput "Exchange Domain Version is $tmp"
         }
         If( $tmp -lt $minDFL) {
             If( $State["InstallPhase"] -eq 4) {
                 # Only check before starting setup
-                Write-Error "Minimum required DFL version is $minDFL, aborting"
+                Write-MyError "Minimum required DFL version is $minDFL, aborting"
                 Exit $ERR_BADDOMAINLEVEL
             }
         }
 
-        Write-Output "Checking domain mode"
+        Write-MyOutput "Checking domain mode"
         If( Test-DomainNativeMode -eq $DOMAIN_MIXEDMODE) {
-            Write-Error "Domain is in mixed mode, native mode is required"
+            Write-MyError "Domain is in mixed mode, native mode is required"
             Exit $ERR_ADMIXEDMODE
         }
         Else {
-            Write-Output "Domain is in native mode"
+            Write-MyOutput "Domain is in native mode"
         }
 
-        Write-Output "Checking Forest Functional Level"
+        Write-MyOutput "Checking Forest Functional Level"
         If( ( Get-ForestFunctionalLevel) -lt $FOREST_LEVEL2003) {
-            Write-Error "Forest is not Functional Level 2003 or later"
+            Write-MyError "Forest is not Functional Level 2003 or later"
             Exit $ERR_ADFORESTLEVEL
         }
         Else {
-            Write-Output "Forest Functional Level is 2003 or later"
+            Write-MyOutput "Forest Functional Level is 2003 or later"
         }
 
         If( Get-PSExecutionPolicy) {
@@ -1197,24 +1238,24 @@ process {
 
         If( $State["AutoPilot"]) {
             If( $State["AdminAccount"] -and $State["AdminPassword"]) {
-                Write-Output "Checking provided credentials"
+                Write-MyOutput "Checking provided credentials"
                 If( validate-Credentials) {
-                    Write-Output "Credentials seem valid"
+                    Write-MyOutput "Credentials seem valid"
                 }
                 Else {
-                    Write-Error "Provided credentials don't seem to be valid"
+                    Write-MyError "Provided credentials don't seem to be valid"
                     Exit $ERR_INVALIDCREDENTIALS
                 }
             } 
             Else {
                 Try {
-                    Write-Output "Credentials not specified, prompting .."
+                    Write-MyOutput "Credentials not specified, prompting .."
                     $Credentials= Get-Credential
                     $State["AdminAccount"]= $Credentials.UserName
                     $State["AdminPassword"]= ($Credentials.Password | ConvertFrom-SecureString)
                 }
                 Catch {
-                    Write-Error "AutoPilot specified but no or improper credentials provided"
+                    Write-MyError "AutoPilot specified but no or improper credentials provided"
                     Exit $ERR_NOACCOUNTSPECIFIED
                 }
             }
@@ -1222,33 +1263,33 @@ process {
     }
 
     Function Cleanup {
-        Write-Output "Cleaning up .."
+        Write-MyOutput "Cleaning up .."
         If( Get-WindowsFeature Bits) {
-            Write-Output "Removing BITS feature"
+            Write-MyOutput "Removing BITS feature"
             Remove-WindowsFeature Bits
         }
-        Write-Verbose "Removing state file $Statefile"
+        Write-MyVerbose "Removing state file $Statefile"
         Remove-Item $Statefile
     }
 
     Function LockScreen {
-        Write-Verbose 'Locking system'
+        Write-MyVerbose 'Locking system'
         rundll32.exe user32.dll,LockWorkStation
     }
 
     Function Configure-HighPerformancePowerPlan {
-        Write-Verbose 'Configuring Power Plan'
+        Write-MyVerbose 'Configuring Power Plan'
         $p = Get-CimInstance -Name root\cimv2\power -Class win32_PowerPlan -Filter "ElementName = 'High Performance'"          
         $tmp= Invoke-CimMethod -InputObject $p -MethodName Activate        
-        $CurrentPlan = Get-WmiObject -Namespace root\cimv2\power -Class win32_PowerPlan | Where { $_.IsActive }
-        Write-Output "Power Plan active: $($CurrentPlan.ElementName)"
+        $CurrentPlan = Get-WmiObject -Namespace root\cimv2\power -Class win32_PowerPlan | Where-Object { $_.IsActive }
+        Write-MyOutput "Power Plan active: $($CurrentPlan.ElementName)"
     }
 
     Function Configure-Pagefile {
-        Write-Verbose 'Checking Pagefile Configuration'
+        Write-MyVerbose 'Checking Pagefile Configuration'
         $CS = Get-WmiObject -Class Win32_ComputerSystem -EnableAllPrivileges
         If ($CS.AutomaticManagedPagefile) {
-            Write-Verbose 'System configured to use Automatic Managed Pagefile, reconfiguring'
+            Write-MyVerbose 'System configured to use Automatic Managed Pagefile, reconfiguring'
             Try {
                 $CS.AutomaticManagedPagefile = $false
                 # RAM + 10 MB, with maximum of 32GB + 10MB
@@ -1261,13 +1302,13 @@ process {
                 $tmp= $CPF.Put()
             }
             Catch {
-                Write-Error "Problem reconfiguring pagefile: $($ERROR[0])"
+                Write-MyError "Problem reconfiguring pagefile: $($ERROR[0])"
             }
             $CPF= Get-WmiObject -Class Win32_PageFileSetting
-            Write-Output "Pagefile set to manual, initial/maximum size: $($CPF.InitialSize)MB / $($CPF.MaximumSize)MB" 
+            Write-MyOutput "Pagefile set to manual, initial/maximum size: $($CPF.InitialSize)MB / $($CPF.MaximumSize)MB" 
         }
         Else {
-            Write-Verbose 'Manually configured page file, skipping configuration'
+            Write-MyVerbose 'Manually configured page file, skipping configuration'
         }
   }
 
@@ -1280,12 +1321,8 @@ process {
     $ScriptFullName = $MyInvocation.MyCommand.Path
     $ScriptName = $ScriptFullName.Split("\")[-1]
     $ParameterString= $PSBoundParameters.getEnumerator() -join " "
-    $MajorOSVersion= [string](Get-WmiObject Win32_OperatingSystem | Select Version | Select @{n="Major";e={($_.Version.Split(".")[0]+"."+$_.Version.Split(".")[1])}}).Major
-    $MinorOSVersion= [string](Get-WmiObject Win32_OperatingSystem | Select Version | Select @{n="Minor";e={($_.Version.Split(".")[2])}}).Minor
-
-    Write-Verbose "Script $ScriptFullName called using $ParameterString"
-    Write-Verbose "Using parameterSet $($PsCmdlet.ParameterSetName)"
-    Write-Verbose "Running on OS build $MajorOSVersion.$MinorOSVersion"
+    $MajorOSVersion= [string](Get-WmiObject Win32_OperatingSystem | Select-Object @{n="Major";e={($_.Version.Split(".")[0]+"."+$_.Version.Split(".")[1])}}).Major
+    $MinorOSVersion= [string](Get-WmiObject Win32_OperatingSystem | Select-Object @{n="Minor";e={($_.Version.Split(".")[2])}}).Minor
 
     # PoSHv2 Workaround
     If( $InstallMultiRole) {
@@ -1297,10 +1334,14 @@ process {
     $StateFile= "$InstallPath\$($ScriptName)_state.xml"
     $State= Load-State
 
+    Write-Output "Script $ScriptFullName called using $ParameterString"
+    Write-Output "Using parameterSet $($PsCmdlet.ParameterSetName)"
+    Write-Output "Running on OS build $MajorOSVersion.$MinorOSVersion"
+
     If(! $State.Count) {
         # No state, initialize settings from parameters
         If( $($PsCmdlet.ParameterSetName) -eq "AutoPilot") {
-            Write-Error "Running in AutoPilot mode but no state file present"
+            Write-MyError "Running in AutoPilot mode but no state file present"
             Exit $ERR_AUTOPILOTNOSTATEFILE
         }
 
@@ -1353,14 +1394,13 @@ process {
 
     If( $AutoPilot -and $State["InstallPhase"] -gt 0) {
         # Wait a little before proceeding 
-        Write-Output "Will continue unattended installation of Exchange in $COUNTDOWN_TIMER seconds .."
+        Write-MyOutput "Will continue unattended installation of Exchange in $COUNTDOWN_TIMER seconds .."
         Start-Sleep -Seconds $COUNTDOWN_TIMER
     }
 
     Check-Sanity
 
-    Write-Verbose "Using transcript file $($State["TranscriptFile"])"
-    Start-Transcript $State["TranscriptFile"] -NoClobber -Append
+    Write-MyVerbose "Logging to $($State["TranscriptFile"])"
 
     # Get rid of the security dialog when spawning exe's etc.
     Disable-OpenFileSecurityWarning
@@ -1368,28 +1408,28 @@ process {
     # Always disable autologon allowing you to "fix" things and reboot intermediately
     Disable-AutoLogon
 
-    Write-Output "Checking for pending reboot .."
+    Write-MyOutput "Checking for pending reboot .."
     If( is-RebootPending ) {
         If( $State["AutoPilot"]) {
             Write-Warning "Reboot pending, will reboot system and rerun phase"
         }
         Else {
-            Write-Error "Reboot pending, please reboot system and restart script (parameters will be saved)"
+            Write-MyError "Reboot pending, please reboot system and restart script (parameters will be saved)"
         }
     }
     Else {
 
     $State["InstallPhase"]++
-    Write-Verbose "Current phase is $($State["InstallPhase"]) of $MAX_PHASE"
+    Write-MyVerbose "Current phase is $($State["InstallPhase"]) of $MAX_PHASE"
 
       Switch ($State["InstallPhase"]) {
         1 {
-            Write-Output "Installing Operating System prerequisites"
+            Write-MyOutput "Installing Operating System prerequisites"
             Install-WindowsFeatures $MajorOSVersion
         }
 
         2 {
-            Write-Output "Installing Exchange prerequisites"
+            Write-MyOutput "Installing Exchange prerequisites"
             Import-Module BITSTransfer
 
             If( $State["InstallFilterPack"]) {
@@ -1419,14 +1459,16 @@ process {
                             }
                         }
                         Else {
-                            Write-Output ".NET Framework 4.51 or later detected"
+                            Write-MyOutput ".NET Framework 4.51 or later detected"
                         }
                     }
                 }
                 Else {
-                    Write-Output ".NET Framework 4.52 or later detected"
+                    Write-MyOutput ".NET Framework 4.52 or later detected"
                 }
             }
+
+            Set-NET461InstallBlock
 
             If( $MajorOSVersion -eq $WS2008R2_MAJOR) {
                 If( $State["UseWMF3"]) {
@@ -1441,29 +1483,31 @@ process {
 
             If( $MajorOSVersion -eq $WS2012_MAJOR) {
                 Package-Install "KB2985459" "KB2985459: The W3wp.exe process has high CPU usage when you run PowerShell commands for Exchange" "Windows8-RT-KB2985459-x64.msu|477081_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows%208/Windows%20Server%202012%20RTM/nosp/Fix512067/9200/free/477081_intl_x64_zip.exe" ("/quiet", "/norestart")
+                Package-Install "KB2884597" "KB2884597: Virtual Disk Service or applications that use the Virtual Disk Service crash or freeze in Windows Server 2012" "Windows8-RT-KB2884597-x64.msu|467323_intl_x64_zip.exe" "hotfixv4.microsoft.com/Windows%208%20RTM/nosp/Fix469260/9200/free/467323_intl_x64_zip.exe" ("/quiet", "/norestart")
+                Package-Install "KB2894875" "KB2894875: Windows 8-based or Windows Server 2012-based computer freezes when you run the 'dir' command on an ReFS volume" "Windows8-RT-KB2894875-x64.msu|468889_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows%208%20RTM/nosp/Fix473391/9200/free/468889_intl_x64_zip.exe" ("/quiet", "/norestart")
             }
 
         }
 
         3 {
-            Write-Output "Installing Exchange prerequisites (continued)"
+            Write-MyOutput "Installing Exchange prerequisites (continued)"
             Package-Install "{41D635FE-4F9D-47F7-8230-9B29D6D42D31}" "Unified Communications Managed API 4.0 Runtime" "UcmaRuntimeSetup.exe" "http://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" ("/passive", "/norestart")
 
             If ($State["OrganizationName"]) {
-                Write-Output "Checking/Preparing Active Directory"
+                Write-MyOutput "Checking/Preparing Active Directory"
                 Prepare-Exchange
             }
         }
 
         4 {
-            Write-Output "Installing Exchange"
+            Write-MyOutput "Installing Exchange"
             Install-Exchange15_
             If( Get-Service MSExchangeTransport -ErrorAction SilentlyContinue) {
-                Write-Output "Configuring MSExchangeTransport startup to Manual"
+                Write-MyOutput "Configuring MSExchangeTransport startup to Manual"
                 Set-Service MSExchangeTransport -StartupType Manual
             }
             If( Get-Service MSExchangeFrontEndTransport -ErrorAction SilentlyContinue) {
-                Write-Output "Configuring MSExchangeFrontEndTransport startup to Manual"
+                Write-MyOutput "Configuring MSExchangeFrontEndTransport startup to Manual"
                 Set-Service MSExchangeFrontEndTransport -StartupType Manual
             }
             switch( $State["SCP"]) {
@@ -1471,18 +1515,18 @@ process {
                         # Do nothing
                 }
                 $null   {
-                            Write-Output 'Removing Service Connection Point record'
+                            Write-MyOutput 'Removing Service Connection Point record'
                             Clear-AutodiscoverServiceConnectionPoint $ENV:COMPUTERNAME
                 }
                 default {
-                            Write-Output "Configuring Service Connection Point record as $($State['SCP'])"
+                            Write-MyOutput "Configuring Service Connection Point record as $($State['SCP'])"
                             Set-AutodiscoverServiceConnectionPoint $ENV:COMPUTERNAME $State['SCP']
                 }
             }
         }
 
         5 {
-            Write-Output "Post-configuring"
+            Write-MyOutput "Post-configuring"
 
             Configure-HighPerformancePowerPlan
             Configure-Pagefile
@@ -1501,15 +1545,15 @@ process {
             # Insert generic customizations here
 
             #If( Get-Service MSExchangeHM -ErrorAction SilentlyContinue) {
-            #    Write-Output "Configuring MSExchangeHM startup to Manual"
+            #    Write-MyOutput "Configuring MSExchangeHM startup to Manual"
             #    Set-Service MSExchangeHM -StartupType Manual
             #}
 
             If( $State["IncludeFixes"]) {
-              Write-Output "Installing applicable recommended hotfixes and security updates"
+              Write-MyOutput "Installing applicable recommended hotfixes and security updates"
 
               $ImagePathVersion= File-DetectVersion ( (Get-WMIObject -Query 'select * from win32_service where name="MSExchangeServiceHost"').PathName.Trim('"') )
-              Write-Verbose "Installed Exchange MSExchangeIS version is $(Setup-TextVersion $ImagePathVersion)"
+              Write-MyVerbose "Installed Exchange MSExchangeIS version is $(Setup-TextVersion $ImagePathVersion)"
 
               Switch( $MajorOSVersion) {
                 $WS2008R2_MAJOR {
@@ -1549,31 +1593,30 @@ process {
 
         6 {
             If( Get-Service MSExchangeTransport -ErrorAction SilentlyContinue) {
-                Write-Output "Configuring MSExchangeTransport startup to Automatic"
+                Write-MyOutput "Configuring MSExchangeTransport startup to Automatic"
                 Set-Service MSExchangeTransport -StartupType Automatic
             }
             If( Get-Service MSExchangeFrontEndTransport -ErrorAction SilentlyContinue) {
-                Write-Output "Configuring MSExchangeFrontEndTransport startup to Automatic"
+                Write-MyOutput "Configuring MSExchangeFrontEndTransport startup to Automatic"
                 Set-Service MSExchangeFrontEndTransport -StartupType Automatic
             }
             Enable-UAC
             Enable-IEESC
-            Write-Output "Setup finished - We're good to go."
+            Write-MyOutput "Setup finished - We're good to go."
         }
 
         default {
-            Write-Error "Unknown phase ($($State["InstallPhase"]) of $MAX_PHASE)"
+            Write-MyError "Unknown phase ($($State["InstallPhase"]) of $MAX_PHASE)"
         }
       }
     }
 
     Enable-OpenFileSecurityWarning
     Save-State $State
-    Stop-Transcript 
 
     If( $State["AutoPilot"]) {
         If( $State["InstallPhase"] -lt $MAX_PHASE) {
-        	Write-Verbose "Preparing system for next phase"
+        	Write-MyVerbose "Preparing system for next phase"
 	        Disable-UAC
             Disable-IEESC
             Enable-AutoLogon
@@ -1582,7 +1625,7 @@ process {
         Else {
             Cleanup
         }
-        Write-Output "Rebooting in $COUNTDOWN_TIMER seconds .."
+        Write-MyOutput "Rebooting in $COUNTDOWN_TIMER seconds .."
         Start-Sleep -Seconds $COUNTDOWN_TIMER
         Restart-Computer -Force
     }
