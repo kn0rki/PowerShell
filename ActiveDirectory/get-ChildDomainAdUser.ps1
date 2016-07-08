@@ -3,4 +3,7 @@
 $childdomains = (get-addomain).childdomains
 
 #equests user informantion givenname, surname, telephonenumber, emailaddress, country and canonicalname from each childdomain-
-$childdomains | %{Write-Output "Starting for Domain $_"; get-aduser -server $_ -filter * -properties * | select-object Givenname, Surname, telephonenumber, emailaddress, country, canonicalname}
+$childdomains | %{
+        Write-Output "Starting for Domain $_"; 
+        get-aduser -server $_ -filter * -properties * | select-object Givenname, Surname, telephonenumber, emailaddress, country, canonicalname
+}
