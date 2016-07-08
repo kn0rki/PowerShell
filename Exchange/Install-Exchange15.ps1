@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE 
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 	
-    Version 2.2, February 27th, 2016
+    Version 2.4, July 6th, 2016
 
     Thanks to Maarten Piederiet, Thomas Stensitzki, Brian Reid, Martin Sieber, Sebastiaan Brozius and everyone who provided feedback.
     
@@ -115,6 +115,17 @@
             Changes to output so all output/verbose/warning/error get logged
             Added check to Organization for invalid characters
             Fixed specifying an Organization name containing spaces
+    2.3     Added support up to Exchange 2013 CU12 / Exchange 2016 CU1
+            Switched version detection to ExSetup, now follows Build
+    2.31    Fixed output error messages
+    2.4     Added support up to Exchange 2013 CU13 / Exchange 2016 CU2
+            Added support for .NET 4.6.1 (Exchange 2013 CU13+ / Exchange 2016 CU2+)
+            Added NONET461 switch, to use .NET 4.5.2, and block .NET 4.6.1
+            Added installation of .NET 4.6.1 OS-dependent required hotfixes:
+            * KB2919442 and KB2919355 (~700MB!) for WS2012R2 (prerequisites).
+            * KB3146716 for WS2008/WS2008R2, KB3146714 for WS2012, and KB3146715 for WS2012R2.
+            Added recommended Keep-Alive and RPC timeout settings
+            Added DisableSSL3 to disable SSL3 (KB187498)
                 
     .PARAMETER Organization
     Specifies name of the Exchange organization to create. When omitted, the step
@@ -124,10 +135,10 @@
     Specifies you want to install both Mailbox server and CAS roles (Exchange 2013 only).
 
     .PARAMETER InstallMailbox
-    Specifies you want to install the Mailbox server role for (Exchange 2013/2016). 
+    Specifies you want to install the Mailbox server role  (Exchange 2013/2016). 
 
     .PARAMETER InstallCAS
-    Specifies you want to install the CAS role for (Exchange 2013 only).
+    Specifies you want to install the CAS role (Exchange 2013 only).
 
     .PARAMETER MDBName (optional)
     Specifies name of the initially created database.
@@ -168,6 +179,12 @@
 
     .PARAMETER UseWMF3
     Installs WMF3 instead of WMF4 for Exchange 2013 SP1 or later.
+
+    .PARAMETER NONET461
+    Prevents installing .NET Framework 4.6.1 and uses 4.5.2, when supported Exchange is deployed.
+
+    .PARAMETER DisableSSL3 
+    Disables SSL3 after setup.
 
     .PARAMETER SCP 
     Reconfigures Autodiscover Service Connection Point record for this server post-setup, i.e.
@@ -256,11 +273,20 @@ param(
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="NoSetup")]
                 [Switch]$InstallFilterPack,
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="NoSetup")]
+                [Switch]$NoNet461,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="C")]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="NoSetup")]
                 [Switch]$UseWMF3,
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="C")]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="NoSetup")]
+                [Switch]$DisableSSL3,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="C")]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="M")]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName="CM")]
@@ -324,19 +350,29 @@ process {
     $EX2016_MINFORESTLEVEL          = 15317
     $EX2016_MINDOMAINLEVEL          = 13236
 
+    # Exchange Versions
+    $EX2013_MAJOR                   = "15.0"
+    $EX2016_MAJOR                   = "15.1"
+
     # Supported Exchange versions
-    $EX2013STOREEXE_RTM             = '15.00.0516.027'
-    $EX2013STOREEXE_CU1             = '15.00.0620.004'
-    $EX2013STOREEXE_CU2             = '15.00.0712.000'
-    $EX2013STOREEXE_CU3             = '15.00.0775.000'
-    $EX2013STOREEXE_SP1             = '15.00.0847.030'
-    $EX2013STOREEXE_CU5             = '15.00.0913.000'
-    $EX2013STOREEXE_CU6             = '15.00.0995.026'
-    $EX2013STOREEXE_CU6             = '15.00.0995.028'
-    $EX2013STOREEXE_CU7             = '15.00.1044.021'
-    $EX2013STOREEXE_CU8             = '15.00.1076.000'
-    $EX2013STOREEXE_CU9             = '15.00.1104.000'
-    $EX2016STOREEXE                 = '15.01.0225.037'
+    $EX2013STOREEXE_RTM             = '15.00.0516.032'
+    $EX2013STOREEXE_CU1             = '15.00.0620.029'
+    $EX2013STOREEXE_CU2             = '15.00.0712.024'
+    $EX2013STOREEXE_CU3             = '15.00.0775.038'
+    $EX2013STOREEXE_SP1             = '15.00.0847.032'
+    $EX2013STOREEXE_CU5             = '15.00.0913.022'
+    $EX2013STOREEXE_CU6             = '15.00.0995.029'
+    $EX2013STOREEXE_CU7             = '15.00.1044.025'
+    $EX2013STOREEXE_CU8             = '15.00.1076.009'
+    $EX2013STOREEXE_CU9             = '15.00.1104.005'
+    $EX2013STOREEXE_CU10            = '15.00.1130.007'
+    $EX2013STOREEXE_CU11            = '15.00.1156.006'
+    $EX2013STOREEXE_CU12            = '15.00.1178.004'
+    $EX2013STOREEXE_CU13            = '15.00.1210.003'
+    $EX2016STOREEXE_PRE             = '15.01.0225.016'
+    $EX2016STOREEXE_RTM             = '15.01.0225.042'
+    $EX2016STOREEXE_CU1             = '15.01.0396.030'
+    $EX2016STOREEXE_CU2             = '15.01.0466.034'
 
     # Supported Operating Systems
     $WS2008R2_MAJOR                 = '6.1'
@@ -372,7 +408,14 @@ process {
             $EX2013STOREEXE_CU7= 'Exchange Server 2013 Cumulative Update 7';
             $EX2013STOREEXE_CU8= 'Exchange Server 2013 Cumulative Update 8';
             $EX2013STOREEXE_CU9= 'Exchange Server 2013 Cumulative Update 9';
-            $EX2016STOREEXE=     'Exchange Server 2016 RTM';
+            $EX2013STOREEXE_CU10= 'Exchange Server 2013 Cumulative Update 10';
+            $EX2013STOREEXE_CU11= 'Exchange Server 2013 Cumulative Update 11';
+            $EX2013STOREEXE_CU12= 'Exchange Server 2013 Cumulative Update 12';
+            $EX2013STOREEXE_CU13= 'Exchange Server 2013 Cumulative Update 13';
+            $EX2016STOREEXE_PRE= 'Exchange Server 2016 Preview';
+            $EX2016STOREEXE_RTM= 'Exchange Server 2016 RTM';
+            $EX2016STOREEXE_CU1= 'Exchange Server 2016 Cumulative Update 1';
+            $EX2016STOREEXE_CU2= 'Exchange Server 2016 Cumulative Update 2';
         }
         if ($Versions[$FileVersion]) {
             $res= "$FileVersion ($($Versions[$FileVersion]))"
@@ -382,7 +425,6 @@ process {
         }
         return $res
     }
-
     Function File-DetectVersion( $File) {
         $res= 0
         If( Test-Path $File) {
@@ -396,22 +438,34 @@ process {
 
     Function Write-MyOutput( $Text) {
         Write-Output $Text
-        Write-Output "$(Get-Date -Format u): $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        $Location= Split-Path $State['TranscriptFile'] -Parent
+        If( Test-Path $Location) {
+            Write-Output "$(Get-Date -Format u): $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        }
     }
 
     Function Write-MyWarning( $Text) {
         Write-Warning $Text
-        Write-Output "$(Get-Date -Format u): [WARNING] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        $Location= Split-Path $State['TranscriptFile'] -Parent
+        If( Test-Path $Location) {
+            Write-Output "$(Get-Date -Format u): [WARNING] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        }
     }
 
     Function Write-MyError( $Text) {
         Write-Error $Text
-        Write-Output "$(Get-Date -Format u): [ERROR] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        $Location= Split-Path $State['TranscriptFile'] -Parent
+        If( Test-Path $Location) {
+            Write-Output "$(Get-Date -Format u): [ERROR] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        }
     }
 
     Function Write-MyVerbose( $Text) {
         Write-Verbose $Text
-        Write-Output "$(Get-Date -Format u): [VERBOSE] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        $Location= Split-Path $State['TranscriptFile'] -Parent
+        If( Test-Path $Location) {
+            Write-Output "$(Get-Date -Format u): [VERBOSE] $Text" | Out-File $State['TranscriptFile'] -Append -ErrorAction SilentlyContinue
+        }
     }
 
     Function Get-PSExecutionPolicy {
@@ -459,6 +513,17 @@ process {
         Else {
             return $false
         }
+    }
+
+    Function is-MinimalBuild() {
+        Param ( [String]$BuildNumber, [String]$ReferenceBuildNumber)
+        $Temp= $BuildNumber.Split(".")
+        $MajorBuildNumber= "$($Temp[0]).$($Temp[1])"
+        $MinorBuildNumber= "$($Temp[2]).$($Temp[3])"
+        $Temp= $ReferenceBuildNumber.Split(".")
+        $MajorReferenceBuildNumber= "$($Temp[0]).$($Temp[1])"
+        $MinorReferenceBuildNumber= "$($Temp[2]).$($Temp[3])"
+        Return ($MajorBuildNumber -ge $MajorReferenceBuildNumber -and $MinorBuildNumber -ge $MinorReferenceBuildNumber)
     }
 
     Function is-RebootPending {
@@ -715,7 +780,7 @@ process {
     Function Install-Exchange15_ {
         $ver= $State['MajorSetupVersion']
         Write-MyOutput "Installing Microsoft Exchange Server ($ver)"
-        If( $State['MajorSetupVersion'] -ge 15.1) {
+        If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
             $PresenceKey= "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{CD981244-E9B8-405A-9026-6AEB9DCEF1F1}"
         }
         Else {
@@ -726,7 +791,7 @@ process {
             $roles+= "Mailbox"
         }
         If( $State["InstallCAS"]) {
-            If( $State['MajorSetupVersion'] -ge 15.1) {
+            If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
                     Write-Warning 'Ignoring specified InstallCAS option for Exchange 2016'
             }
             Else {
@@ -770,7 +835,7 @@ process {
             $forestlvl= Get-ExchangeForestLevel
             $domainlvl= Get-ExchangeDomainLevel
             Write-MyOutput "Exchange Forest Schema version: $forestlvl, Domain: $domainlvl)"
-            If( $State['MajorSetupVersion'] -ge 15.1) {
+            If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
                 $MinFFL= $EX2016_MINFORESTLEVEL
                 $MinDFL= $EX2016_MINDOMAINLEVEL
             }
@@ -834,6 +899,7 @@ process {
     }
 
     Function Package-IsInstalled( $PackageID) {
+        Write-MyVerbose "Checking if package $PackageID is installed .."
         $PresenceKey= $null
         $PresenceKey= (Get-WmiObject win32_quickfixengineering | Where-Object { $_.HotfixID -eq $PackageID }).HotfixID
         If( !( $PresenceKey)) {
@@ -850,7 +916,9 @@ process {
         return $PresenceKey
     }
 
-    Function Package-Install ( $PackageID, $Package, $FileName, $OnlineURL, [array]$Arguments) {
+    Function Package-Install () {
+        Param ( [String]$PackageID, [string]$Package, [String]$FileName, [String]$OnlineURL, [array]$Arguments)
+
         Write-MyOutput "Processing $Package ($PackageID)"
         $PresenceKey= Package-IsInstalled $PackageID
         If( !( $PresenceKey )){
@@ -892,6 +960,9 @@ process {
             If( !( $PresenceKey)){
                 Write-MyError "Problem installing $Package"
                 Exit $ERR_PROBLEMPACKAGESETUP
+            }
+            Else {
+                Write-MyOutput "Succesfully installed $Package"
             }
         }
         Else {
@@ -1045,19 +1116,40 @@ process {
         $RegKey= "HKLM:\Software\Microsoft\NET Framework Setup\NDP\WU"
         $RegName= "BlockNetFramework461"
         If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
-            If( -not( Test-Path $RegKey -ErrorAction SilentlyContinue)) {
+            If( -not (Test-Path $RegKey -ErrorAction SilentlyContinue)) {
                 New-Item -Path (Split-Path $RegKey -Parent) -Name (Split-Path $RegKey -Leaf) -ErrorAction SilentlyContinue | out-null
             }
         }
         New-ItemProperty -Path $RegKey -Name $RegName  -Value 1 -ErrorAction SilentlyContinue| out-null
         If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
-            Write-MyError "Unable to set registry key"
+            Write-MyError "Unable to set registry entry $RegKey\$RegName"
+        }
+    }
+
+    Function Remove-NET461InstallBlock {
+        Write-MyOutput "Checking for installation blockade for .NET Framework 4.6.1 (KB3133990)"
+        $RegKey= "HKLM:\Software\Microsoft\NET Framework Setup\NDP\WU"
+        $RegName= "BlockNetFramework461"
+        If( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue) {
+            Write-MyOutput "Removing installation blockade for .NET Framework 4.6.1 (KB3133990)"
+            Remove-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue| out-null
+            If( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue) {
+                Write-MyError "Unable to remove registry entry $RegKey\$RegName"
+            }
         }
     }
 
     Function Check-Sanity {
 
         Write-MyOutput "Performing sanity checks .."
+
+        Write-MyOutput "Checking temporary installation folder .."
+        Mkdir $State["InstallPath"] -ErrorAction SilentlyContinue |out-null
+        If( !( Test-Path $State["InstallPath"])) {
+            Write-MyError "Can't create temporary folder $($State["InstallPath"])"
+            Exit $ERR_CANTCREATETEMPFOLDER
+        }
+
         Write-MyVerbose "Checking Operating System .. $($MajorOSVersion).$($MinorOSVersion)" 
         If( ($MajorOSVersion -ne $WS2012R2_MAJOR) -and ($MajorOSVersion -ne $WS2012_MAJOR) -and ($MajorOSVersion -eq $WS2008R2_MAJOR -and $MinorOSVersion -lt 7601) ) {
             Write-MyError "Windows Server 2008 R2 SP1, Windows Server 2012 or Windows Server 2012 R2 is required, but not detected"
@@ -1092,13 +1184,16 @@ process {
 
         If( !( $State["NoSetup"]) -or $State["OrganizationName"]) {
             Write-MyOutput "Checking if we can access Exchange setup .."
-            If(! (Test-Path "$($State["SourcePath"])\setup.exe")) {
-                Write-MyError "Can't find Exchange setup at $($State["SourcePath"])"
+            If(! (Test-Path "$($State['SourcePath'])\setup.exe")) {
+                Write-MyError "Can't find Exchange setup at $($State['SourcePath'])"
                 Exit $ERR_MISSINGEXCHANGESETUP
             }
+            Else {
+                Write-MyOutput "Exchange setup located at $($State['SourcePath'])\setup.exe"
+            }
 
-            $SetupVersion= File-DetectVersion "$($State["SourcePath"])\setup.exe"
-            Write-MyOutput "Exchange setup version: $(Setup-TextVersion $SetupVersion )"
+            $SetupVersion= File-DetectVersion "$($State["SourcePath"])\Setup\ServerRoles\Common\ExSetup.exe"
+            Write-MyOutput "ExSetup version: $(Setup-TextVersion $SetupVersion )"
             If( $SetupVersion) {
                 $Num= $SetupVersion.split('.') | ForEach-Object { [string]([int]$_)}
                 $MajorSetupVersion= [decimal]($num[0]+ '.'+ $num[1])
@@ -1114,9 +1209,8 @@ process {
             If( $UseWMF3 -and $SetupVersion -ge $EX2013STOREEXE_SP1) {
                 Write-Warning "WMF3 is not supported for Exchange Server 2013 SP1 and up"
             }
-
             Write-MyOutput "Checking roles to install"
-            If( $State['MajorSetupVersion'] -ge 15.1) {
+            If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
                 If ( !( $State["InstallMailbox"])) {
                     Write-MyError "No roles specified to install"
                     Exit $ERR_UNKNOWNROLESSPECIFIED
@@ -1144,12 +1238,6 @@ process {
             Write-Warning "System doesn't have a static IP addresses configured"
         }
 
-        Write-MyOutput "Checking temporary installation folder .."
-        Mkdir $State["InstallPath"] -ErrorAction SilentlyContinue |out-null
-        If( !( Test-Path $State["InstallPath"])) {
-            Write-MyError "Can't create temporary folder $($State["InstallPath"])"
-            Exit $ERR_CANTCREATETEMPFOLDER
-        }
         If ( $State["TargetPath"]) {
             $Location= Split-Path $State['TargetPath'] -Qualifier
             Write-MyOutput "Checking installation path .."
@@ -1176,7 +1264,7 @@ process {
         }
 
         Write-MyOutput "Checking Exchange Forest Schema Version"
-        If( $State['MajorSetupVersion'] -ge 15.1) {
+        If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
             $minFFL= $EX2016_MINFORESTLEVEL
             $minDFL= $EX2016_MINDOMAINLEVEL
         }
@@ -1310,7 +1398,52 @@ process {
         Else {
             Write-MyVerbose 'Manually configured page file, skipping configuration'
         }
-  }
+    }
+
+    Function Configure-TCP {
+        # See https://blogs.technet.microsoft.com/david231/2015/03/30/for-exchange-2010-and-2013-do-this-before-calling-microsoft/
+        Write-MyVerbose 'Configuring RPC Timeout setting'
+        $RegKey= "HKLM:\Software\Policies\Microsoft\Windows NT\RPC"
+        $RegName= "MinimumConnectionTimeout"
+        If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
+            If( -not (Test-Path $RegKey -ErrorAction SilentlyContinue)) {
+                New-Item -Path (Split-Path $RegKey -Parent) -Name (Split-Path $RegKey -Leaf) -ErrorAction SilentlyContinue | out-null
+            }
+        }
+        Write-MyOutput 'Setting RPC Timeout to 120 seconds'
+        New-ItemProperty -Path $RegKey -Name $RegName  -Value 120 -ErrorAction SilentlyContinue| out-null
+
+        Write-MyVerbose 'Configuring Keep-Alive Timeout setting'
+        $RegKey= "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
+        $RegName= "KeepAliveTime"
+        If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
+            If( -not (Test-Path $RegKey -ErrorAction SilentlyContinue)) {
+                New-Item -Path (Split-Path $RegKey -Parent) -Name (Split-Path $RegKey -Leaf) -ErrorAction SilentlyContinue | out-null
+            }
+        }
+        Write-MyOutput 'Setting Keep-Alive Timeout to 120 seconds'
+        New-ItemProperty -Path $RegKey -Name $RegName  -Value 120 -ErrorAction SilentlyContinue| out-null
+    }
+
+    Function Disable-SSL3 {
+        # SSL3 disabling/Poodle, https://support.microsoft.com/en-us/kb/187498
+        Write-MyVerbose 'Disabling SSL3 protocol for services'
+        $RegKey= "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server"
+        $RegName= "Enabled"
+        If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
+            If( -not (Test-Path $RegKey -ErrorAction SilentlyContinue)) {
+                New-Item -Path (Split-Path $RegKey -Parent) -Name (Split-Path $RegKey -Leaf) -ErrorAction SilentlyContinue | out-null
+            }
+        }
+        $RegKey= "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Client"
+        $RegName= "DisabledByDefault"
+        If( -not( Get-ItemProperty -Path $RegKey -Name $RegName -ErrorAction SilentlyContinue)) {
+            If( -not (Test-Path $RegKey -ErrorAction SilentlyContinue)) {
+                New-Item -Path (Split-Path $RegKey -Parent) -Name (Split-Path $RegKey -Leaf) -ErrorAction SilentlyContinue | out-null
+            }
+        }
+        New-ItemProperty -Path $RegKey -Name $RegName  -Value 1 -ErrorAction SilentlyContinue| out-null
+    }
 
     ########################################
     # MAIN
@@ -1341,7 +1474,7 @@ process {
     If(! $State.Count) {
         # No state, initialize settings from parameters
         If( $($PsCmdlet.ParameterSetName) -eq "AutoPilot") {
-            Write-MyError "Running in AutoPilot mode but no state file present"
+            Write-Error "Running in AutoPilot mode but no state file present"
             Exit $ERR_AUTOPILOTNOSTATEFILE
         }
 
@@ -1364,6 +1497,9 @@ process {
         $State["InstallFilterPack"]= $InstallFilterPack
         $State["NoSetup"]= $NoSetup
         $State["UseWMF3"]= $UseWMF3
+        $State["NoNet461"]= $NoNet461
+        $State["Install461"]= $False
+        $State["DisableSSL3"]= $DisableSSL3
         $State["SCP"]= $SCP
         $State["Lock"]= $Lock
         $State["TranscriptFile"]= "$($State["InstallPath"])\$($ScriptName)_$(Get-Date -format "yyyyMMddHHmmss").log"
@@ -1409,7 +1545,8 @@ process {
     Disable-AutoLogon
 
     Write-MyOutput "Checking for pending reboot .."
-    If( is-RebootPending ) {
+    #If( is-RebootPending ) {
+    If( $false){
         If( $State["AutoPilot"]) {
             Write-Warning "Reboot pending, will reboot system and rerun phase"
         }
@@ -1426,6 +1563,43 @@ process {
         1 {
             Write-MyOutput "Installing Operating System prerequisites"
             Install-WindowsFeatures $MajorOSVersion
+
+            If( @($WS2008R2_MAJOR, $WS2012_MAJOR, $WS2012R2_MAJOR) -contains $MajorOSVersion) {
+ 
+                $TempInstall461= $False
+                If( ($State["MajorSetupVersion"] -ge $EX2016_MAJOR -and (is-MinimalBuild $State["SetupVersion"] $EX2016STOREEXE_CU2)) -or 
+                    ($State["MajorSetupVersion"] -eq $EX2013_MAJOR -and (is-MinimalBuild $State["SetupVersion"] $EX2013STOREEXE_CU13))) {
+                    If( $State["NoNet461"]) {
+                        Write-MyOutput ".NET Framework 4.6.1 supported, but NoNet461 specified - will use .NET Framework 4.5.2"
+                    }
+                    Else {
+                        Write-MyOutput "Exchange setup version ($($State["SetupVersion"])) supports .NET Framework 4.6.1"
+                        $State["Install461"]= $True
+                    }
+                }
+                Else {
+                    If( $State["NoNet461"]) {
+                        Write-MyWarning "Ignoring NoNet461 switch: Exchange version doesn't support .NET Framework 4.6.1"
+                    }
+                    Else {
+                        Write-MyOutput "Exchange setup version ($($State["SetupVersion"])) doesn't support .NET Framework 4.6.1"
+                    }
+                }
+
+                If( $State["Install461"]) {
+                    # Install hotfixes required by .NET Framework 4.6.1
+                    Switch( $MajorOSVersion) {
+                        $WS2008R2_MAJOR {
+                        }
+                        $WS2012_MAJOR {
+                        }
+                        $WS2012R2_MAJOR {
+                            Package-Install "KB2919442" "KB2919442: Update for Windows Server 2012 R2" "Windows8.1-KB2919442-x64.msu" "https://download.microsoft.com/download/D/6/0/D60ED3E0-93A5-4505-8F6A-8D0A5DA16C8A/Windows8.1-KB2919442-x64.msu" ("/quiet", "/norestart")
+                            Package-Install "KB2919355" "Windows RT 8.1, Windows 8.1, and Windows Server 2012 R2 update: April 2014" "Windows8.1-KB2919355-x64.msu" "https://download.microsoft.com/download/2/5/6/256CCCFB-5341-4A8D-A277-8A81B21A1E35/Windows8.1-KB2919355-x64.msu" ("/quiet", "/norestart")
+                        }
+                    }
+                }
+            }
         }
 
         2 {
@@ -1437,38 +1611,62 @@ process {
                 Package-Install "00004159000290400100000000F01FEC\Patches\2B24AAAA46EAEB942BF5566A6B1DE170" "Microsoft Office 2010 Filter Pack SP1" "filterpack2010sp1-kb2460041-x64-fullfile-en-us.exe" "http://download.microsoft.com/download/A/A/3/AA345161-18B8-45AE-8DC8-DA6387264CB9/filterpack2010sp1-kb2460041-x64-fullfile-en-us.exe" ("/passive", "/norestart")
             }
 
-            If( @($WS2008R2_MAJOR, $WS2012_MAJOR, $WS2012R2_MAJOR) -contains $MajorOSVersion) {
+            If( $State["Install461"]) {
+                # Check .NET FrameWork 4.6.1 or later installed
+                If( (Get-NETVersion) -lt 394271) {
+                    # If present, remove blockade
+                    Remove-NET461InstallBlock
+                    Package-Install "KB3102467" "Microsoft .NET Framework 4.6.1" "NDP461-KB3102436-x86-x64-AllOS-ENU.exe" "https://download.microsoft.com/download/E/4/1/E4173890-A24A-4936-9FC9-AF930FE3FA40/NDP461-KB3102436-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
+                }
+                Else {
+                    Write-MyOutput ".NET Framework 4.6.1 or later detected"
+                }
+                # For .NET 4.6.1, install required hotfixes: KB3146716 for WS2008/WS2008R2, KB3146714 for WS2012, and KB3146715 for WS2012R2
+                Write-MyOutput "Checking applicable post-.NET Framework 4.6.x hotfixes" 
+                Switch( $MajorOSVersion) {
+                    $WS2008R2_MAJOR {
+                        Package-Install "KB3146716" "Hotfix rollup 3146716 for the .NET Framework 4.6 and 4.6.1 in Windows" "NDP461-KB3146716-x86-x64-ENU.exe" "http://download.microsoft.com/download/E/F/1/EF1FB34B-58CB-4568-85EC-FA359387E328/NDP461-KB3146716-x86-x64-ENU.exe" ("/quiet", "/norestart")
+                    }
+                    $WS2012_MAJOR {
+                        Package-Install "KB3146714" "Hotfix rollup 3146714 for the .NET Framework 4.6 and 4.6.1 in Windows" "Windows8-RT-KB3146714-x64.msu" "http://download.microsoft.com/download/E/F/1/EF1FB34B-58CB-4568-85EC-FA359387E328/Windows8-RT-KB3146714-x64.msu" ("/quiet", "/norestart")
+                    }
+                    $WS2012R2_MAJOR {
+                        Package-Install "KB3146715" "Hotfix rollup 3146715 for the .NET Framework 4.6 and 4.6.1 in Windows" "Windows8.1-KB3146715-x64.msu" "http://download.microsoft.com/download/E/F/1/EF1FB34B-58CB-4568-85EC-FA359387E328/Windows8.1-KB3146715-x64.msu" ("/quiet", "/norestart")
+                    }
+                }
+            }
+            Else {
                 # Check .NET FrameWork 4.5.2 or later installed
                 If( (Get-NETVersion) -lt 379893) {
+                    Write-MyOutput ".NET Framework 4.5.2 will be installed"
                     # Package GUID is different for WS2008R2/2012, .452 supported on CU7 or later
                     If( $State["SetupVersion"] -ge $EX2013STOREEXE_CU7) {
                         If( $MajorOSVersion -eq $WS2008R2_MAJOR) {
-                            Package-Install "{26784146-6E05-3FF9-9335-786C7C0FB5BE}" "Microsoft .NET Framework 4.52" "NDP452-KB2901907-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/E/2/1/E21644B5-2DF2-47C2-91BD-63C560427900/NDP452-KB2901907-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
+                            Package-Install "{26784146-6E05-3FF9-9335-786C7C0FB5BE}" "Microsoft .NET Framework 4.5.2" "NDP452-KB2901907-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/E/2/1/E21644B5-2DF2-47C2-91BD-63C560427900/NDP452-KB2901907-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
                         }
                         Else {
-                            Package-Install "KB2934520" "Microsoft .NET Framework 4.52" "NDP452-KB2901907-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/E/2/1/E21644B5-2DF2-47C2-91BD-63C560427900/NDP452-KB2901907-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
+                            Package-Install "KB2934520" "Microsoft .NET Framework 4.5.2" "NDP452-KB2901907-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/E/2/1/E21644B5-2DF2-47C2-91BD-63C560427900/NDP452-KB2901907-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
                         }
                     } 
                     Else {
                         If( (Get-NETVersion) -lt 378675) {
                             If( $MajorOSVersion -eq $WS2008R2_MAJOR) {
-                                Package-Install "{7DEBE4EB-6B40-3766-BB35-5CBBC385DA37}" "Microsoft .NET Framework 4.51" "NDP451-KB2858728-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/1/6/7/167F0D79-9317-48AE-AEDB-17120579F8E2/NDP451-KB2858728-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
+                                Package-Install "{7DEBE4EB-6B40-3766-BB35-5CBBC385DA37}" "Microsoft .NET Framework 4.5.1" "NDP451-KB2858728-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/1/6/7/167F0D79-9317-48AE-AEDB-17120579F8E2/NDP451-KB2858728-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
                             }
                             Else {
-                                Package-Install "KB2881468" "Microsoft .NET Framework 4.51" "NDP451-KB2858728-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/1/6/7/167F0D79-9317-48AE-AEDB-17120579F8E2/NDP451-KB2858728-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
+                                Package-Install "KB2881468" "Microsoft .NET Framework 4.5.1" "NDP451-KB2858728-x86-x64-AllOS-ENU.exe" "http://download.microsoft.com/download/1/6/7/167F0D79-9317-48AE-AEDB-17120579F8E2/NDP451-KB2858728-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
                             }
                         }
                         Else {
-                            Write-MyOutput ".NET Framework 4.51 or later detected"
+                            Write-MyOutput ".NET Framework 4.5.1 or later detected"
                         }
                     }
                 }
-                Else {
-                    Write-MyOutput ".NET Framework 4.52 or later detected"
+                Else {s
+                    Write-MyOutput ".NET Framework 4.5.2 or later detected"
                 }
+                Set-NET461InstallBlock
             }
-
-            Set-NET461InstallBlock
 
             If( $MajorOSVersion -eq $WS2008R2_MAJOR) {
                 If( $State["UseWMF3"]) {
@@ -1530,6 +1728,10 @@ process {
 
             Configure-HighPerformancePowerPlan
             Configure-Pagefile
+            Configure-TCP
+            If( $State["DisableSSL3"]) {
+                Disable-SSL3
+            }
 
             #Load-ExchangeModule
 
