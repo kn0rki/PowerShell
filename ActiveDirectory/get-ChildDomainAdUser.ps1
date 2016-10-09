@@ -1,4 +1,3 @@
-#requires -Version 1
 #get all users from entire active directory. Includes childdomains
 #gets all childdomains
 $childdomains = (get-addomain).childdomains
