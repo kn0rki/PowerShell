@@ -1,15 +1,16 @@
-﻿function connect-exserver
+﻿#requires -Version 2
+function connect-exserver
 {
     param
     (
-    [String]
-    [Parameter(Mandatory=$true)]
-    $server
+        [String]
+        [Parameter(Mandatory = $true)]
+        $server
     )
     
     $exsession = New-PSSession      -ConfigurationName 'Microsoft.Exchange' 
-                                    -ConnectionUri "http://$server/Powershell" 
-                                    -Credential (Get-Credential) 
-                                    -Authentication Kerberos
-    Import-PSSession $exsession
+    -ConnectionUri "http://$server/Powershell" 
+    -Credential (Get-Credential) 
+    -Authentication Kerberos
+    Import-PSSession -Session $exsession
 }
