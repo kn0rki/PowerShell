@@ -1,17 +1,29 @@
+#requires -Version 1
 #Defrag all Vmware Workstation VMDK Files via vmware-vdiskmanager.exe
 
 
 param(
-	[string]$vmdkpath = ".\",
-	[string]$vmwarevdiskmanagerpath
+    [string]$vmdkpath = '.\',
+    [string]$vmwarevdiskmanagerpath
 )
 
-if(!($vmwarevdiskmanagerpath)){
-	$vmwarevdiskmanagerpath = (get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\").installpath
-	$vmwarevdiskmanagerpath += "vmware-vdiskmanager.exe"
+if(!($vmwarevdiskmanagerpath))
+{
+    $vmwarevdiskmanagerpath = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\').installpath
+    $vmwarevdiskmanagerpath += 'vmware-vdiskmanager.exe'
 }
 
 
-$files = Get-ChildItem -Path $vmdkpath -Recurse | ?{ $_.Name -like "*.vmdk"} | %{echo $_.VersionInfo.Filename}
-$files | % { echo $_;& "$vmwarevdiskmanagerpath" -d $_}
+$files = Get-ChildItem -Path $vmdkpath -Recurse |
+    Where-Object -FilterScript {
+        $_.Name -like '*.vmdk'
+    } |
+        ForEach-Object -Process {
+            Write-Output -InputObject $_.VersionInfo.Filename
+        }
+
+$files | ForEach-Object -Process {
+    Write-Output -InputObject $_
+    & "$vmwarevdiskmanagerpath" -d $_
+}
 
