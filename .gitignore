@@ -36,3 +36,13 @@ Icon
 .Trashes
 
 *.png
+output.txt
+*.exe
+*.pssproj
+*.sln
+.vs/PowerShell/v14/.suo
+*.json
+conf/conf
+conf/conf.example
+Script.ps1
+vmware/test.ps1

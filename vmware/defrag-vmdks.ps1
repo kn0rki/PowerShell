@@ -17,8 +17,7 @@ if(!($vmwarevdiskmanagerpath))
 $files = Get-ChildItem -Path $vmdkpath -Recurse |
     Where-Object -FilterScript {
         $_.Name -like '*.vmdk'
-    } |
-        ForEach-Object -Process {
+    } | ForEach-Object -Process {
             Write-Output -InputObject $_.VersionInfo.Filename
         }
 

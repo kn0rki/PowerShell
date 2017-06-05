@@ -1,4 +1,4 @@
-﻿asnp "VeeamPSSnapIn" -ErrorAction SilentlyContinue
+﻿Add-PSSnapIn "VeeamPSSnapIn" -ErrorAction SilentlyContinue
 
 ####################################################################
 # Configuration
@@ -22,7 +22,7 @@ foreach ($vm in $vmobjs) {
         $jobobjid = $vm.FindParent("Datacenter").Id + "\" + $vm.Id
     }
     $vm | Add-Member -MemberType NoteProperty "JobObjId" -Value $jobobjid
-}    
+}
 
 # Get a list of all VMs from vCenter and add to hash table, assume Unprotected
 $vms=@{}
